@@ -7,6 +7,13 @@ jQuery(document).ready(function($) {
     $( this ).addClass('cd_acr_heading--active');
   });
 
+  $(".cd_acr_heading--post-parents").click(function(){
+    $( ".cd_acr_field" ).removeClass('cd_acr_field--active');
+    $( ".cd_acr_post_parents" ).addClass('cd_acr_field--active');
+    $( ".cd_acr_heading" ).removeClass('cd_acr_heading--active');
+    $( this ).addClass('cd_acr_heading--active');
+  });
+
   $(".cd_acr_heading--post-id").click(function(){
     $( ".cd_acr_field" ).removeClass('cd_acr_field--active');
     $( ".cd_acr_field--post-ids" ).addClass('cd_acr_field--active');

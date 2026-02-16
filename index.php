@@ -25,6 +25,9 @@
  //Create Data Mapping Fields
  include 'admin/route-type/data-mapping.php';
 
+ //Create Logs Metabox
+ include 'admin/route-type/logs-metabox.php';
+
  //Create Route Endpoint Fields
  include 'admin/route-endpoint/route-endpoint.php';
 
@@ -34,7 +37,7 @@
 
 
 include_once( ABSPATH . 'wp-admin/includes/plugin.php' );
-if ( is_plugin_active('advanced-custom-routes-custom-endpoints-for-wp-rest-api/index.php')) {
+if ( is_plugin_active( plugin_basename( __FILE__ ) ) ) {
 
   $dir = plugin_dir_path( __FILE__ );
 

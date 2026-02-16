@@ -1,6 +1,7 @@
 <?php
 
 require_once( plugin_dir_path( __FILE__ ) . '../lib/merge-tags.php' );
+require_once( plugin_dir_path( __FILE__ ) . '../lib/logger.php' );
 
 add_action('rest_api_init', function() {
 
@@ -49,13 +50,37 @@ add_action('rest_api_init', function() {
         $map_target_id_raw = get_post_meta($endpointID, 'cd_acr_map_target_id', true);
 
         $callback = function ( WP_REST_Request $request ) use ($endpointID, $php_code, $ext_api_enabled, $ext_api_url, $ext_api_method, $ext_api_headers_raw, $ext_api_body_raw, $response_template, $data_mapping, $map_target_id_raw) {
+            $log_data = [
+                'method' => $request->get_method(),
+                'params' => $request->get_params(),
+                'headers' => $request->get_headers(),
+                'php_transform' => null,
+                'external_api' => null,
+                'mapping' => [],
+                'php_error' => null,
+                'response' => null,
+            ];
+
+            $php_transform = null;
             $ext_response = null;
 
-            // 1. External API Call
+            // 1. Transform PHP Execution (Can transform incoming data for forwarding)
+            if (!empty($php_code)) {
+                try {
+                    $php_transform = eval($php_code);
+                    $log_data['php_transform'] = $php_transform;
+                } catch (Throwable $e) {
+                    $log_data['php_error'] = $e->getMessage();
+                    cd_acr_log_activity($endpointID, $log_data);
+                    return new WP_Error('php_error', $e->getMessage(), array('status' => 500));
+                }
+            }
+
+            // 2. External API Call (Forwarding after Transform)
             if ($ext_api_enabled === '1' && !empty($ext_api_url)) {
-                $parsed_url = cd_acr_parse_merge_tags($ext_api_url, $request);
-                $parsed_headers = json_decode(cd_acr_parse_merge_tags($ext_api_headers_raw, $request), true) ?: [];
-                $parsed_body = cd_acr_parse_merge_tags($ext_api_body_raw, $request);
+                $parsed_url = cd_acr_parse_merge_tags($ext_api_url, $request, null, $php_transform);
+                $parsed_headers = json_decode(cd_acr_parse_merge_tags($ext_api_headers_raw, $request, null, $php_transform), true) ?: [];
+                $parsed_body = cd_acr_parse_merge_tags($ext_api_body_raw, $request, null, $php_transform);
 
                 $args = array(
                     'method' => $ext_api_method,
@@ -72,41 +97,37 @@ add_action('rest_api_init', function() {
                         'headers' => wp_remote_retrieve_headers($remote_res),
                         'status' => wp_remote_retrieve_response_code($remote_res)
                     );
+                    $log_data['external_api'] = $ext_response;
+                } else {
+                    $log_data['external_api'] = ['error' => $remote_res->get_error_message()];
                 }
             }
 
-            // 2. Data Mapping
+            // 3. Data Mapping (ETL to Post Meta)
             if (!empty($data_mapping)) {
-                $target_id = cd_acr_parse_merge_tags($map_target_id_raw, $request, $ext_response);
+                $target_id = cd_acr_parse_merge_tags($map_target_id_raw, $request, $ext_response, $php_transform);
                 if (is_numeric($target_id)) {
                     foreach ($data_mapping as $item) {
                         $meta_key = $item['key'];
-                        $meta_val = cd_acr_parse_merge_tags($item['val'], $request, $ext_response);
+                        $meta_val = cd_acr_parse_merge_tags($item['val'], $request, $ext_response, $php_transform);
                         update_post_meta($target_id, $meta_key, $meta_val);
+                        $log_data['mapping'][] = ['post_id' => $target_id, 'key' => $meta_key, 'value' => $meta_val];
                     }
                 }
             }
 
-            // 3. Custom PHP Execution
-            $php_result = null;
-            if (!empty($php_code)) {
-                // SECURITY FIX: Do NOT interpolate merge tags into code before eval.
-                // Users should use $request and $ext_response directly in PHP.
-                try {
-                    $php_result = eval($php_code);
-                } catch (Throwable $e) {
-                    return new WP_Error('php_error', $e->getMessage(), array('status' => 500));
-                }
-            }
-
             // 4. Final Response
+            $final_output = $php_transform;
             if (!empty($response_template)) {
-                $final_res = cd_acr_parse_merge_tags($response_template, $request, $ext_response);
+                $final_res = cd_acr_parse_merge_tags($response_template, $request, $ext_response, $php_transform);
                 $decoded = json_decode($final_res, true);
-                return $decoded ?: $final_res;
+                $final_output = $decoded ?: $final_res;
             }
 
-            return $php_result;
+            $log_data['response'] = $final_output;
+            cd_acr_log_activity($endpointID, $log_data);
+
+            return $final_output;
         };
 
         register_rest_route('custom-routes/v1', $endpointTitle, [
@@ -130,7 +151,14 @@ add_action('rest_api_init', function() {
     } else {
         // Query Builder Logic
         $cd_acr_get_data = function ( WP_REST_Request $request ) use ($endpointID) {
-            return cd_acr_handle_query_builder($request, $endpointID);
+            $data = cd_acr_handle_query_builder($request, $endpointID);
+            cd_acr_log_activity($endpointID, [
+                'method' => $request->get_method(),
+                'params' => $request->get_params(),
+                'type' => 'query_builder',
+                'response_count' => is_array($data) ? count($data) : 0,
+            ]);
+            return $data;
         };
 
         register_rest_route('custom-routes/v1', $endpointTitle, [

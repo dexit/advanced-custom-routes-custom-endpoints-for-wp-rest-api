@@ -47,4 +47,22 @@ function easy_custom_rest_api_endpoints_post_type() {
  // adding the function to the Wordpress init
  add_action( 'init', 'easy_custom_rest_api_endpoints_post_type');
 
- ?>
+
+function cd_acr_register_log_post_type() {
+    register_post_type('cd-acr-log', array(
+        'labels' => array(
+            'name' => 'Endpoint Logs',
+            'singular_name' => 'Log Entry',
+        ),
+        'public' => false,
+        'show_ui' => true,
+        'show_in_menu' => 'edit.php?post_type=cd-custom-rest-api',
+        'supports' => array('title', 'editor'),
+        'capability_type' => 'post',
+        'capabilities' => array(
+            'create_posts' => 'do_not_allow', // Logs are created programmatically
+        ),
+        'map_meta_cap' => true,
+    ));
+}
+add_action('init', 'cd_acr_register_log_post_type');

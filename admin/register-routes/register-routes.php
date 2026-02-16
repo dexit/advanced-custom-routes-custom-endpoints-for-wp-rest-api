@@ -28,6 +28,37 @@ add_action('rest_api_init', function() {
     $endpointID = $cd_customEndpoint->ID;
     $route_type = get_post_meta($endpointID, 'cd_acr_route_type', true);
 
+    // Security Verification Callback
+    $permission_callback = function ( WP_REST_Request $request ) use ($endpointID) {
+        $auth_type = get_post_meta($endpointID, 'cd_acr_inc_auth_type', true) ?: 'none';
+
+        if ($auth_type === 'none') return true;
+
+        if ($auth_type === 'api_key') {
+            $key_name = get_post_meta($endpointID, 'cd_acr_inc_key_name', true) ?: 'X-API-Key';
+            $expected_val = get_post_meta($endpointID, 'cd_acr_inc_key_val', true);
+            $loc = get_post_meta($endpointID, 'cd_acr_inc_key_loc', true) ?: 'header';
+
+            $provided_val = ($loc === 'header') ? $request->get_header($key_name) : $request->get_param($key_name);
+
+            if ($provided_val === $expected_val) return true;
+        }
+
+        if ($auth_type === 'hmac') {
+            $secret = get_post_meta($endpointID, 'cd_acr_inc_hmac_secret', true);
+            $header_name = get_post_meta($endpointID, 'cd_acr_inc_hmac_header', true) ?: 'X-Signature';
+            $algo = get_post_meta($endpointID, 'cd_acr_inc_hmac_algo', true) ?: 'sha256';
+
+            $provided_sig = $request->get_header($header_name);
+            $body = $request->get_body();
+            $expected_sig = hash_hmac($algo, $body, $secret);
+
+            if (hash_equals($expected_sig, (string)$provided_sig)) return true;
+        }
+
+        return new WP_Error('rest_forbidden', __('Invalid authentication credentials.', 'text-domain'), array('status' => 403));
+    };
+
     if ($route_type === 'custom_php') {
         $php_code = get_post_meta($endpointID, 'cd_acr_php_code', true);
         $methods = get_post_meta($endpointID, 'cd_acr_http_methods', true);
@@ -42,6 +73,15 @@ add_action('rest_api_init', function() {
         $ext_api_headers_raw = get_post_meta($endpointID, 'cd_acr_ext_api_headers', true);
         $ext_api_body_raw = get_post_meta($endpointID, 'cd_acr_ext_api_body', true);
 
+        // External API Auth
+        $ext_auth_type = get_post_meta($endpointID, 'cd_acr_ext_auth_type', true) ?: 'none';
+        $ext_bearer_token = get_post_meta($endpointID, 'cd_acr_ext_bearer_token', true);
+        $ext_basic_user = get_post_meta($endpointID, 'cd_acr_ext_basic_user', true);
+        $ext_basic_pass = get_post_meta($endpointID, 'cd_acr_ext_basic_pass', true);
+        $ext_key_name = get_post_meta($endpointID, 'cd_acr_ext_key_name', true);
+        $ext_key_val = get_post_meta($endpointID, 'cd_acr_ext_key_val', true);
+        $ext_key_loc = get_post_meta($endpointID, 'cd_acr_ext_key_loc', true) ?: 'header';
+
         // Response Template
         $response_template = get_post_meta($endpointID, 'cd_acr_response_template', true);
 
@@ -49,7 +89,7 @@ add_action('rest_api_init', function() {
         $data_mapping = get_post_meta($endpointID, 'cd_acr_data_mapping', true);
         $map_target_id_raw = get_post_meta($endpointID, 'cd_acr_map_target_id', true);
 
-        $callback = function ( WP_REST_Request $request ) use ($endpointID, $php_code, $ext_api_enabled, $ext_api_url, $ext_api_method, $ext_api_headers_raw, $ext_api_body_raw, $response_template, $data_mapping, $map_target_id_raw) {
+        $callback = function ( WP_REST_Request $request ) use ($endpointID, $php_code, $ext_api_enabled, $ext_api_url, $ext_api_method, $ext_api_headers_raw, $ext_api_body_raw, $ext_auth_type, $ext_bearer_token, $ext_basic_user, $ext_basic_pass, $ext_key_name, $ext_key_val, $ext_key_loc, $response_template, $data_mapping, $map_target_id_raw) {
             $log_data = [
                 'method' => $request->get_method(),
                 'params' => $request->get_params(),
@@ -64,7 +104,12 @@ add_action('rest_api_init', function() {
             $php_transform = null;
             $ext_response = null;
 
-            // 1. Transform PHP Execution (Can transform incoming data for forwarding)
+            // Helper for PHP block
+            $acr_parse = function($str) use ($request, &$ext_response, &$php_transform) {
+                return cd_acr_parse_merge_tags($str, $request, $ext_response, $php_transform);
+            };
+
+            // 1. Transform PHP Execution
             if (!empty($php_code)) {
                 try {
                     $php_transform = eval($php_code);
@@ -76,11 +121,29 @@ add_action('rest_api_init', function() {
                 }
             }
 
-            // 2. External API Call (Forwarding after Transform)
+            // 2. External API Call
             if ($ext_api_enabled === '1' && !empty($ext_api_url)) {
                 $parsed_url = cd_acr_parse_merge_tags($ext_api_url, $request, null, $php_transform);
                 $parsed_headers = json_decode(cd_acr_parse_merge_tags($ext_api_headers_raw, $request, null, $php_transform), true) ?: [];
                 $parsed_body = cd_acr_parse_merge_tags($ext_api_body_raw, $request, null, $php_transform);
+
+                // Handle External Auth
+                if ($ext_auth_type === 'bearer' && !empty($ext_bearer_token)) {
+                    $token = cd_acr_parse_merge_tags($ext_bearer_token, $request, null, $php_transform);
+                    $parsed_headers['Authorization'] = 'Bearer ' . $token;
+                } elseif ($ext_auth_type === 'basic' && !empty($ext_basic_user)) {
+                    $user = cd_acr_parse_merge_tags($ext_basic_user, $request, null, $php_transform);
+                    $pass = cd_acr_parse_merge_tags($ext_basic_pass, $request, null, $php_transform);
+                    $parsed_headers['Authorization'] = 'Basic ' . base64_encode($user . ':' . $pass);
+                } elseif ($ext_auth_type === 'api_key' && !empty($ext_key_name)) {
+                    $name = cd_acr_parse_merge_tags($ext_key_name, $request, null, $php_transform);
+                    $val = cd_acr_parse_merge_tags($ext_key_val, $request, null, $php_transform);
+                    if ($ext_key_loc === 'header') {
+                        $parsed_headers[$name] = $val;
+                    } else {
+                        $parsed_url = add_query_arg($name, $val, $parsed_url);
+                    }
+                }
 
                 $args = array(
                     'method' => $ext_api_method,
@@ -103,7 +166,7 @@ add_action('rest_api_init', function() {
                 }
             }
 
-            // 3. Data Mapping (ETL to Post Meta)
+            // 3. Data Mapping
             if (!empty($data_mapping)) {
                 $target_id = cd_acr_parse_merge_tags($map_target_id_raw, $request, $ext_response, $php_transform);
                 if (is_numeric($target_id)) {
@@ -133,19 +196,19 @@ add_action('rest_api_init', function() {
         register_rest_route('custom-routes/v1', $endpointTitle, [
             'methods' => $methods,
             'callback' => $callback,
-            'permission_callback' => '__return_true',
+            'permission_callback' => $permission_callback,
         ]);
 
         register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<id>[\d]+)', [
             'methods' => $methods,
             'callback' => $callback,
-            'permission_callback' => '__return_true',
+            'permission_callback' => $permission_callback,
         ]);
 
         register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<slug>[a-zA-Z0-9-]+)', [
             'methods' => $methods,
             'callback' => $callback,
-            'permission_callback' => '__return_true',
+            'permission_callback' => $permission_callback,
         ]);
 
     } else {
@@ -164,19 +227,19 @@ add_action('rest_api_init', function() {
         register_rest_route('custom-routes/v1', $endpointTitle, [
           'methods' => 'GET',
           'callback' => $cd_acr_get_data,
-          'permission_callback' => '__return_true',
+          'permission_callback' => $permission_callback,
         ]);
 
         register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<id>[\d]+)', [
           'methods' => 'GET',
           'callback' => $cd_acr_get_data,
-          'permission_callback' => '__return_true',
+          'permission_callback' => $permission_callback,
         ]);
 
         register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<slug>[a-zA-Z0-9-]+)', [
           'methods' => 'GET',
           'callback' => $cd_acr_get_data,
-          'permission_callback' => '__return_true',
+          'permission_callback' => $permission_callback,
         ]);
     }
   }

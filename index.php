@@ -19,6 +19,12 @@
  //Create Response Output Fields
  include 'admin/response-output/response-output.php';
 
+ //Create Route Type Fields
+ include 'admin/route-type/route-type.php';
+
+ //Create Data Mapping Fields
+ include 'admin/route-type/data-mapping.php';
+
  //Create Route Endpoint Fields
  include 'admin/route-endpoint/route-endpoint.php';
 

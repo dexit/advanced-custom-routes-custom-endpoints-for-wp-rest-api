@@ -1,5 +1,7 @@
 <?php
 
+require_once( plugin_dir_path( __FILE__ ) . '../lib/merge-tags.php' );
+
 add_action('rest_api_init', function() {
 
   $args = [
@@ -22,15 +24,140 @@ add_action('rest_api_init', function() {
     //Replace whitespaces with dashes
     $endpointTitle = preg_replace("/[\s_]/", "-", $endpointTitleMultiWhitespace);
 
-
-
     $endpointID = $cd_customEndpoint->ID;
+    $route_type = get_post_meta($endpointID, 'cd_acr_route_type', true);
 
+    if ($route_type === 'custom_php') {
+        $php_code = get_post_meta($endpointID, 'cd_acr_php_code', true);
+        $methods = get_post_meta($endpointID, 'cd_acr_http_methods', true);
+        if (empty($methods)) {
+            $methods = array('GET');
+        }
 
-    //Function to grab needed data for REST API
-    $cd_acr_get_data = function ( WP_REST_Request $request ) use ($endpointID) {
+        // External API Settings
+        $ext_api_enabled = get_post_meta($endpointID, 'cd_acr_ext_api_enabled', true);
+        $ext_api_url = get_post_meta($endpointID, 'cd_acr_ext_api_url', true);
+        $ext_api_method = get_post_meta($endpointID, 'cd_acr_ext_api_method', true) ?: 'GET';
+        $ext_api_headers_raw = get_post_meta($endpointID, 'cd_acr_ext_api_headers', true);
+        $ext_api_body_raw = get_post_meta($endpointID, 'cd_acr_ext_api_body', true);
 
+        // Response Template
+        $response_template = get_post_meta($endpointID, 'cd_acr_response_template', true);
 
+        // Mapping Settings
+        $data_mapping = get_post_meta($endpointID, 'cd_acr_data_mapping', true);
+        $map_target_id_raw = get_post_meta($endpointID, 'cd_acr_map_target_id', true);
+
+        $callback = function ( WP_REST_Request $request ) use ($endpointID, $php_code, $ext_api_enabled, $ext_api_url, $ext_api_method, $ext_api_headers_raw, $ext_api_body_raw, $response_template, $data_mapping, $map_target_id_raw) {
+            $ext_response = null;
+
+            // 1. External API Call
+            if ($ext_api_enabled === '1' && !empty($ext_api_url)) {
+                $parsed_url = cd_acr_parse_merge_tags($ext_api_url, $request);
+                $parsed_headers = json_decode(cd_acr_parse_merge_tags($ext_api_headers_raw, $request), true) ?: [];
+                $parsed_body = cd_acr_parse_merge_tags($ext_api_body_raw, $request);
+
+                $args = array(
+                    'method' => $ext_api_method,
+                    'headers' => $parsed_headers,
+                    'body' => $parsed_body,
+                    'timeout' => 30
+                );
+
+                $remote_res = wp_remote_request($parsed_url, $args);
+
+                if (!is_wp_error($remote_res)) {
+                    $ext_response = array(
+                        'body' => wp_remote_retrieve_body($remote_res),
+                        'headers' => wp_remote_retrieve_headers($remote_res),
+                        'status' => wp_remote_retrieve_response_code($remote_res)
+                    );
+                }
+            }
+
+            // 2. Data Mapping
+            if (!empty($data_mapping)) {
+                $target_id = cd_acr_parse_merge_tags($map_target_id_raw, $request, $ext_response);
+                if (is_numeric($target_id)) {
+                    foreach ($data_mapping as $item) {
+                        $meta_key = $item['key'];
+                        $meta_val = cd_acr_parse_merge_tags($item['val'], $request, $ext_response);
+                        update_post_meta($target_id, $meta_key, $meta_val);
+                    }
+                }
+            }
+
+            // 3. Custom PHP Execution
+            $php_result = null;
+            if (!empty($php_code)) {
+                // SECURITY FIX: Do NOT interpolate merge tags into code before eval.
+                // Users should use $request and $ext_response directly in PHP.
+                try {
+                    $php_result = eval($php_code);
+                } catch (Throwable $e) {
+                    return new WP_Error('php_error', $e->getMessage(), array('status' => 500));
+                }
+            }
+
+            // 4. Final Response
+            if (!empty($response_template)) {
+                $final_res = cd_acr_parse_merge_tags($response_template, $request, $ext_response);
+                $decoded = json_decode($final_res, true);
+                return $decoded ?: $final_res;
+            }
+
+            return $php_result;
+        };
+
+        register_rest_route('custom-routes/v1', $endpointTitle, [
+            'methods' => $methods,
+            'callback' => $callback,
+            'permission_callback' => '__return_true',
+        ]);
+
+        register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<id>[\d]+)', [
+            'methods' => $methods,
+            'callback' => $callback,
+            'permission_callback' => '__return_true',
+        ]);
+
+        register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<slug>[a-zA-Z0-9-]+)', [
+            'methods' => $methods,
+            'callback' => $callback,
+            'permission_callback' => '__return_true',
+        ]);
+
+    } else {
+        // Query Builder Logic
+        $cd_acr_get_data = function ( WP_REST_Request $request ) use ($endpointID) {
+            return cd_acr_handle_query_builder($request, $endpointID);
+        };
+
+        register_rest_route('custom-routes/v1', $endpointTitle, [
+          'methods' => 'GET',
+          'callback' => $cd_acr_get_data,
+          'permission_callback' => '__return_true',
+        ]);
+
+        register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<id>[\d]+)', [
+          'methods' => 'GET',
+          'callback' => $cd_acr_get_data,
+          'permission_callback' => '__return_true',
+        ]);
+
+        register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<slug>[a-zA-Z0-9-]+)', [
+          'methods' => 'GET',
+          'callback' => $cd_acr_get_data,
+          'permission_callback' => '__return_true',
+        ]);
+    }
+  }
+});
+
+/**
+ * Helper to handle Query Builder logic.
+ */
+function cd_acr_handle_query_builder($request, $endpointID) {
       $amountParam = $request->get_param('amount');
       $offsetParam = $request->get_param('offset');
       $pageParam = $request->get_param('page');
@@ -111,9 +238,6 @@ add_action('rest_api_init', function() {
       if($pageParam == NULL){
         $postOffset = $offset;
       }else{
-        //Math to figure out how many posts to offset for the next page of results.
-        //page number minus one, then multiple that by the amount of posts per page.
-        //Finally if there is an offset value add that to the page offset.
         $postOffset = ($amount * ($pageParam - 1)) + (int)$offset;
       }
 
@@ -367,7 +491,6 @@ add_action('rest_api_init', function() {
          'name' => $slug,
       ];
 
-      // var_dump($args);
 
       $posts = get_posts($args);
 
@@ -439,71 +562,21 @@ add_action('rest_api_init', function() {
             }else{
 
               if(get_option( 'cd_acr_custom_field_type' ) == 'custom_built'){
-
-                //Custom Built Field
                 $data[$i][$field] = get_post_meta( $post->ID, $field, true );
-
               }elseif(get_option( 'cd_acr_custom_field_type' ) == 'acf'){
-
-                //ACF
                 $data[$i][$field] = get_field( $field, $post->ID );
-
               }elseif(get_option( 'cd_acr_custom_field_type' ) == 'metabox_io'){
-
-                //MetaBox.io
                 $data[$i][$field] = rwmb_meta( $field, '', $post->ID );
-
               }elseif(get_option( 'cd_acr_custom_field_type' ) == 'carbon_fields'){
-
-                //Carbon Fields
                 $data[$i][$field] = carbon_get_post_meta( $post->ID, $field );
-
               }else{
-
-                //Custom Built Field
                 $data[$i][$field] = get_post_meta( $post->ID, $field, true );
-
               }
-
-
             }
-
           }
-
-
         }
-
-
         $i++;
       }
-
       return $data;
-
-
-    };
-
-
-    //Reister Route for All Posts
-    register_rest_route('custom-routes/v1', $endpointTitle, [
-      'methods' => 'GET',
-      'callback' => $cd_acr_get_data,
-    ]);
-
-    //Register Route for Single Post by ID
-    register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<id>[\d]+)', [
-      'methods' => 'GET',
-      'callback' => $cd_acr_get_data,
-    ]);
-
-    //Register Route for Single Post by Slug
-    register_rest_route('custom-routes/v1', $endpointTitle . '/(?P<slug>[a-zA-Z0-9-]+)', [
-      'methods' => 'GET',
-      'callback' => $cd_acr_get_data,
-    ]);
-
-  };
-
-
-});
-
+}
  ?>

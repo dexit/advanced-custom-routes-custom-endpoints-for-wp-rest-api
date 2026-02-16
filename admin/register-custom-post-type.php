@@ -6,16 +6,16 @@ function easy_custom_rest_api_endpoints_post_type() {
  register_post_type( 'cd-custom-rest-api', /* (http://codex.wordpress.org/Function_Reference/register_post_type) */
    // let's now add all the options for this post type
    array( 'labels' => array(
-     'name' => __( 'REST API Endpoints', 'bonestheme' ), /* This is the Title of the Group */
-     'singular_name' => __( 'REST API Endpoint', 'bonestheme' ), /* This is the individual type */
-     'all_items' => __( 'All REST API Endpoints', 'bonestheme' ), /* the all items menu item */
+     'name' => __( 'Custom Routes', 'bonestheme' ), /* This is the Title of the Group */
+     'singular_name' => __( 'Custom Route', 'bonestheme' ), /* This is the individual type */
+     'all_items' => __( 'All Custom Routes', 'bonestheme' ), /* the all items menu item */
      'add_new' => __( 'Add New', 'bonestheme' ), /* The add new menu item */
-     'add_new_item' => __( 'Add New REST API Endpoint', 'bonestheme' ), /* Add New Display Title */
+     'add_new_item' => __( 'Add New Custom Route', 'bonestheme' ), /* Add New Display Title */
      'edit' => __( 'Edit', 'bonestheme' ), /* Edit Dialog */
-     'edit_item' => __( 'Edit REST API Endpoints', 'bonestheme' ), /* Edit Display Title */
-     'new_item' => __( 'New REST API Endpoint', 'bonestheme' ), /* New Display Title */
-     'view_item' => __( 'View REST API Endpoint', 'bonestheme' ), /* View Display Title */
-     'search_items' => __( 'Search REST API Endpoint', 'bonestheme' ), /* Search Custom Type Title */
+     'edit_item' => __( 'Edit Custom Routes', 'bonestheme' ), /* Edit Display Title */
+     'new_item' => __( 'New Custom Route', 'bonestheme' ), /* New Display Title */
+     'view_item' => __( 'View Custom Route', 'bonestheme' ), /* View Display Title */
+     'search_items' => __( 'Search Custom Route', 'bonestheme' ), /* Search Custom Type Title */
      'not_found' =>  __( 'Nothing found in the Database.', 'bonestheme' ), /* This displays if there are no entries yet */
      'not_found_in_trash' => __( 'Nothing found in Trash', 'bonestheme' ), /* This displays if there is nothing in the trash */
      'parent_item_colon' => ''
@@ -26,7 +26,9 @@ function easy_custom_rest_api_endpoints_post_type() {
      'exclude_from_search' => true,
      'show_ui' => true,
      'query_var' => true,
-     'show_in_menu' => false,
+     'show_in_menu' => true,
+     'menu_position' => 90,
+     'menu_icon' => 'dashicons-rest-api',
      'rewrite'	=> array( 'slug' => 'rest-api-endpoint', 'with_front' => false ), /* you can specify its url slug */
      'has_archive' => 'rest-api-endpoint', /* you can rename the slug here */
      'capability_type' => 'post',

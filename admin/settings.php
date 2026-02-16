@@ -5,8 +5,6 @@ add_action("admin_menu", "cd_acr_add_menu");
 
 
 function cd_acr_add_menu() {
-  add_menu_page( 'Custom Routes', 'Custom Routes', 'manage_options', 'edit.php?post_type=cd-custom-rest-api', '', 'dashicons-rest-api', 90 );
-
   add_submenu_page(
       'edit.php?post_type=cd-custom-rest-api',
       'Settings',

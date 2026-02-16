@@ -48,26 +48,20 @@ if ( is_plugin_active( plugin_basename( __FILE__ ) ) ) {
 
   // require_once($dir.'public/frontend/frontend.php');
 
-  //Add styles to admin settings
-  function cd_acr_styles() {
-      wp_enqueue_style( 'cd_acr_enqueue', plugins_url( 'admin/lib/css/dist/styles.css', __FILE__ ) );
+  // Add scripts and styles to admin
+  function cd_acr_admin_assets($hook) {
+      $screen = get_current_screen();
+
+      // Load assets only on our custom post type or settings page
+      if ( (isset($screen->post_type) && $screen->post_type === 'cd-custom-rest-api') || strpos($hook, 'wp-rest-endpoints-settings') !== false ) {
+          wp_enqueue_style( 'select2_styles', 'https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.7/css/select2.min.css' );
+          wp_enqueue_style( 'cd_acr_enqueue', plugins_url( 'admin/lib/css/dist/styles.css', __FILE__ ) );
+
+          wp_enqueue_script( 'select2_scripts', 'https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.7/js/select2.min.js', array('jquery'), null, true );
+          wp_enqueue_script( 'cd_acr_enqueue', plugins_url( 'admin/lib/js/scripts.js', __FILE__ ), array('jquery', 'select2_scripts'), null, true );
+      }
   }
-  add_action('admin_print_styles', 'cd_acr_styles');
-
-
-  wp_register_style( 'select2_styles', 'https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.7/css/select2.min.css' );
-  wp_enqueue_style('select2_styles');
-
-  wp_register_script( 'select2_scripts', 'https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.7/js/select2.min.js', 'jquery', null, true );
-  wp_enqueue_script('select2_scripts');
-
-
-
-  //Add scripts to admin settings
-  function cd_acr_scripts() {
-      wp_enqueue_script( 'cd_acr_enqueue', plugins_url( 'admin/lib/js/scripts.js', __FILE__ ) );
-  }
-  add_action('admin_print_styles', 'cd_acr_scripts');
+  add_action('admin_enqueue_scripts', 'cd_acr_admin_assets');
 
 
 
